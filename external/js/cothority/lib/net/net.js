@@ -5,7 +5,7 @@ const UUID = require("pure-uuid");
 const protobuf = require("protobufjs");
 const co = require("co");
 const shuffle = require("shuffle-array");
-const WS = require("ws");
+const WS = require("isomorphic-ws");
 
 const root = require("../protobuf/index.js").root;
 const identity = require("../identity.js");
@@ -101,7 +101,13 @@ function Socket(addr, service) {
  * */
 class RosterSocket {
   constructor(roster, service) {
-    this.addresses = roster.identities.map(id => id.websocketAddr);
+    this.addresses = roster.identities.map(id => {
+      if (id.websocketAddr.startsWith("ws://")) {
+        return "wss" + id.websocketAddr.slice(2)
+      } else {
+        return id.websocketAddr
+      }
+    });
     this.service = service;
     this.lastGoodServer = null;
   }
