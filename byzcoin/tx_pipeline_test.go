@@ -343,6 +343,7 @@ func (p *bigMockTxProc) ProcessTx(tx ClientTransaction, inState *txProcessorStat
 				[]StateChange{sc},
 				[]TxResult{{tx, true}},
 				0,
+				0,
 			},
 		}, nil
 	}
@@ -350,6 +351,7 @@ func (p *bigMockTxProc) ProcessTx(tx ClientTransaction, inState *txProcessorStat
 		newState,
 		append(inState.scs, sc),
 		append(inState.txs, TxResult{tx, true}),
+		0,
 		0,
 	}}, nil
 }

@@ -61,6 +61,7 @@ type txProcessorState struct {
 	scs     StateChanges
 	txs     TxResults
 	txsSize int
+	newVersion Version
 }
 
 func (s *txProcessorState) size() int {
@@ -89,7 +90,12 @@ func (s *txProcessorState) copy() *txProcessorState {
 		append([]StateChange{}, s.scs...),
 		append([]TxResult{}, s.txs...),
 		s.txsSize,
+		0,
 	}
+}
+
+func (s txProcessorState) isEmpty() bool {
+	return len(s.txs) == 0 && s.newVersion == 0
 }
 
 type defaultTxProcessor struct {
@@ -195,12 +201,14 @@ func (s *defaultTxProcessor) ProcessTx(tx ClientTransaction, inState *txProcesso
 				inState.scs,
 				append(inState.txs, TxResult{tx, false}),
 				0,
+				0,
 			}
 		}
 		return &txProcessorState{
 			sstOut,
 			append(inState.scs, scsOut...),
 			append(inState.txs, TxResult{tx, true}),
+			0,
 			0,
 		}
 	}()
@@ -218,12 +226,14 @@ func (s *defaultTxProcessor) ProcessTx(tx ClientTransaction, inState *txProcesso
 			inState.scs,
 			[]TxResult{{tx, false}},
 			0,
+			0,
 		})
 	} else {
 		newStates = append(newStates, &txProcessorState{
 			sstOut,
 			scsOut,
 			[]TxResult{{tx, true}},
+			0,
 			0,
 		})
 	}
@@ -312,64 +322,29 @@ func (p *txPipeline) processTxs(initialState *txProcessorState) {
 	var proposing bool
 	// always use the latest one when adding new
 	currentState := []*txProcessorState{initialState}
-	currentVersion := p.processor.GetLatestGoodState().sst.GetVersion()
-	proposalResult := make(chan error, 1)
-	getInterval := func() <-chan time.Time {
-		interval := p.processor.GetInterval()
-		return time.After(interval)
-	}
+	createBlock := make(chan struct{}, 1)
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
-		createBlockSignal := getInterval()
 		var txHashes [][]byte
 	leaderLoop:
 		for {
 			select {
 			case version := <-p.needUpgrade:
-				if version <= currentVersion {
-					// Prevent multiple upgrade blocks for the same version.
-					break
-				}
 
-				// An upgrade is done synchronously so that other operations
-				// are not performed until the upgrade is done.
+				currentState = append([]*txProcessorState{{newVersion: version}}, currentState...)
 
-				if proposing {
-					// If a block is currently created, it will wait for the
-					// end of the process.
-					err := <-proposalResult
-					proposalResult <- err
-				}
+			case <-createBlock:
 
-				err := p.processor.ProposeUpgradeBlock(version)
-				if err != nil {
-					// Only log the error as it won't prevent normal blocks
-					// to be created.
-					log.Error("failed to upgrade", err)
-				}
-
-				currentVersion = version
-			case <-createBlockSignal:
-
-				if proposing {
-					// Wait for the end of the block creation to prevent too many transactions
-					// to be processed and thus makes an even longer block after the new one.
-					err := <-proposalResult
-					// Only the ProposeBlock sends back results and it sends only one
-					proposing = false
-					if err != nil {
-						log.Error("reverting to last known state because proposal refused:", err)
-						currentState = []*txProcessorState{p.processor.GetLatestGoodState()}
-						break
-					}
-				}
+				log.Print(" Processing block")
 
 				// wait for the next interval if there are no changes
 				// we do not check for the length because currentState
 				// should always be non-empty, otherwise it's a
 				// programmer error
-				if len(currentState[0].txs) == 0 {
+				// if len(currentState[0].txs) == 0 {
+				if currentState[0].isEmpty() {
+					proposing = false
 					break
 				}
 
@@ -381,30 +356,28 @@ func (p *txPipeline) processTxs(initialState *txProcessorState) {
 				p.wg.Add(1)
 				go func(state *txProcessorState) {
 					defer p.wg.Done()
-					if state != nil {
+					if state.newVersion > 0 {
+						err := p.processor.ProposeUpgradeBlock(state.newVersion)
+						if err != nil {
+							// Only log the error as it won't prevent normal blocks
+							// to be created.
+							log.Error("failed to upgrade", err)
+						}
+					} else {
 						// NOTE: ProposeBlock might block for a long time,
 						// but there's nothing we can do about it at the moment
 						// other than waiting for the timeout.
 						err := p.processor.ProposeBlock(state)
 						if err != nil {
 							log.Error("failed to propose block:", err)
-							proposalResult <- err
+							// proposalResult <- err
 							return
 						}
 					}
-					proposalResult <- nil
+					createBlock <- struct{}{}
 				}(inState)
 
 			case tx, ok := <-p.ctxChan:
-
-				select {
-				// This case has a higher priority so we force the select to go through it
-				// first.
-				case <-createBlockSignal:
-					createBlockSignal = time.After(0)
-					break
-				default:
-				}
 
 				if !ok {
 					log.Lvl3("stopping txs processor")
@@ -428,17 +401,19 @@ func (p *txPipeline) processTxs(initialState *txProcessorState) {
 				newStates, err := p.processor.ProcessTx(tx, currentState[len(currentState)-1])
 				if err != nil {
 					log.Error("processing transaction failed with error:", err)
+					break
 				} else {
 					// Remove the last one from currentState because
 					// it might be getting updated and then append newStates.
 					currentState = append(currentState[:len(currentState)-1], newStates...)
 				}
-
-				//createBlockSignal = make(chan(time.Time))
-
+				log.Print("Proposing", proposing)
+				if !proposing {
+					// Start creating a block, but let it figure out by itself
+					// what to put inside
+					createBlock <- struct{}{}
+				}
 			}
-			// Restart the signal interval
-			createBlockSignal = getInterval()
 		}
 	}()
 }

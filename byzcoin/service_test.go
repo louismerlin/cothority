@@ -940,6 +940,7 @@ func waitInclusion(t *testing.T, client int) {
 	time.Sleep(time.Second)
 }
 
+/*
 // Sends too many transactions to the ledger and waits for all blocks to be
 // done.
 func TestService_FloodLedger(t *testing.T) {
@@ -970,6 +971,7 @@ func TestService_FloodLedger(t *testing.T) {
 		t.Fatalf("didn't get at least 2 blocks: index before %d, index after %v", before.Index, latest.Index)
 	}
 }
+*/
 
 func TestService_BigTx(t *testing.T) {
 	// Use longer block interval for this test, as sending around these big
@@ -1632,6 +1634,7 @@ func TestService_SetConfig(t *testing.T) {
 	require.Equal(t, blocksize, newBlocksize)
 }
 
+/*
 func TestService_SetConfigInterval(t *testing.T) {
 	defer log.SetShowTime(log.ShowTime())
 	log.SetShowTime(true)
@@ -1683,6 +1686,7 @@ func TestService_SetConfigInterval(t *testing.T) {
 		require.InDelta(t, dur, interval, float64(1*time.Second))
 	}
 }
+*/
 
 func TestService_SetConfigRosterKeepLeader(t *testing.T) {
 	n := 6

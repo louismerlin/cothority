@@ -230,7 +230,7 @@ func TestClient_Streaming(t *testing.T) {
 			require.NoError(t, err)
 
 			// sleep for a block interval so we create multiple blocks
-			time.Sleep(msg.BlockInterval)
+			// time.Sleep(msg.BlockInterval)
 		}
 	}()
 
